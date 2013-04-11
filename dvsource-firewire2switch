@@ -1,0 +1,363 @@
+#! /usr/bin/perl -w
+#
+# Copyright:
+# 
+# Copyright (C) 2011-2013, SUSE Linux Products GmbH
+# Author: Martin Caj <mcaj@suse.cz>
+#
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+# * Redistributions of source code must retain the above copyright notice, this
+#   list of conditions and the following disclaimer.
+#
+# * Redistributions in binary form must reproduce the above copyright notice,
+#   this list of conditions and the following disclaimer in the documentation
+#   and/or other materials provided with the distribution.
+#
+# * Neither the name of the Novell nor the names of its contributors may be
+#   used to endorse or promote products derived from this software without
+#   specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
+# LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+# POSSIBILITY OF SUCH DAMAGE.
+#
+# About the script:
+#
+# The idea was from the script dvsource-firewire_jw.pl by jw@suse.de.
+# dvsource-firewire_jw.pl -- a rewrite of the firewire grabber.
+# The original dvsource-firewire suffers from the following issues:
+# (C) 2012, jw@suse.de, distribute under GPL-2.0+ or ask.
+#
+#############
+## Requires: dvgrab and perl modules bellow
+#
+# How it is working ?
+# 1. It check your FW device and valid devices save into array @good.
+# 2. Run dv-switch GUI app.
+# 3. for each FW device it run dvsource-firewire with uniqe GUID
+#
+# TODO:
+# function save video to file
+# update help part
+# update options part.
+# add loging into one or more file
+
+
+# (C) SUSE 2013, mcaj@suse.cz, distribute under GPL-2.0+ 
+use strict;
+use Data::Dumper;
+use File::stat;
+use File::Glob;
+use Getopt::Long qw(:config no_ignore_case);
+use Pod::Usage;
+use POSIX ":sys_wait_h";
+
+my $version = '0.1';
+my $a_chan = undef;
+my $a_name = undef;
+my $retry_connect = 0;
+my $host = undef;
+my $port = undef;
+my $tally = undef;
+my $verbose = 0;
+my $help = undef;
+my $dvgrab = 'dvgrab';
+my $dvgrab_opts = '-noavc';
+my $ignore_missing_units = 0;
+my $devices;
+my @good; 
+my $good;
+
+my @children;            # Store connections to them
+my $children;
+
+sub get_ps();
+sub run_grab;
+sub search_dev;
+
+GetOptions(
+	"retry|R" 	=> \$retry_connect,
+	"verbose|v+"	=> \$verbose,
+	"port|p=s"	=> \$port,
+	"host|h=s"	=> \$host,
+	"tally|t"	=> \$tally,
+	"ignore-units|u" => \$ignore_missing_units,
+	"help|?"	=> \$help,
+) or $help++;
+
+pod2usage
+
+(-verbose => 1, -msg => qq{
+dvsource-firewire_jw.pl V$version
+
+$0 [OPTIONS]
+
+Start a dvsource on the next available firewire device. Dead devices (without guid) are skipped,
+devices that are in use (guid appears in /proc/*/cmdline) are also skipped.
+Returns nonzero if no usable devices were found.
+
+Valid options are:
+ -v	Print more information at startup.
+
+ -R, --retry	
+ 	Keep retrying to connect, in case DVswitch is not yet listening.
+
+ -h, --host=HOST
+ -p, --port=PORT
+ 	Specify the network address on which DVswitch is listening.  The
+	host address may be specified by name or as an IPv4 or IPv6 literal.
+
+ -t, --tally
+ 	Print notices of activation and deactivation in the  mixer,  for
+	use with a tally light.  These will take the form "TALLY: on" or
+	"TALLY: off".
+
+}
+) if $help;
+
+
+#Run part:
+
+# search FW device and store them in @good:
+search_dev;
+
+# run dvswitch app
+system ("/usr/bin/dvswitch & ") and die "Error start dvswitch";
+
+# slow down the script
+#sleep 5;
+
+# Start data steam from each FW device:
+
+my $max_procs=$#good ; # How many children we'll create -1
+$max_procs++; #add one becasue is start at 0
+
+my $fwpid;
+my %children;
+#this monitig childrens
+
+
+$devices = 0 ;
+
+foreach $good (@good )
+{
+    $fwpid = fork();
+    die "cannot fork" unless defined $fwpid;
+
+    if ($fwpid == 0) 
+        {
+            # ...
+            $children{$fwpid}=1;
+            # ...
+            print STDERR "Working on the device:$devices, PID:$fwpid  \n" if $verbose >= 1;
+            print "Starting dev/$good[$devices][0] guid=$good[$devices][1]\n \n";
+	    #sleep 5;
+            run_grab ( $devices );
+            $devices++;
+            exit 0;
+        } 
+    else 
+        {
+
+            print STDERR "parent match, last run was $fwpid exiting script \n" if $verbose >= 1; 
+       }
+}
+
+
+exit 0;
+
+
+#####################################################
+
+
+#####################################################
+# wait for end children functions:
+#####################################################
+$SIG{CHLD} = sub 
+{
+print "Runnig $SIG{CHLD} \n";
+ 
+        # don't change $! and $? outside handler
+        local ($!, $?);
+        $fwpid = waitpid(-1, WNOHANG);
+        return if $fwpid == -1;
+        return unless defined $children{$fwpid};
+        print "children pid:  $children{$fwpid} \n";
+        delete $children{$fwpid};
+        print "cleanup_child($fwpid, $?)";
+        cleanup_child($fwpid, $?);
+};
+
+
+
+sub search_dev 
+#####################################################
+# searching for "good" device with valid units ID:
+#####################################################
+
+{
+
+	opendir DIR, "/sys/bus/firewire/devices/" or die "no /sys/bus/firewire/devices/: $!";
+	my @fw = grep { !/^\./ } readdir DIR;
+	closedir DIR;
+	my %fw = map { $_ => { guid => undef } } @fw;
+	print STDERR "Founded FW devices @fw \n" if $verbose >= 1;
+
+	for my $fw (sort @fw)
+	  {
+	    if (open IN, '<', "/sys/bus/firewire/devices/$fw/guid")
+      	{
+		
+		print STDERR "Working on /sys/bus/firewire/devices/$fw/guid \n" if $verbose >= 1;
+		my $guid = <IN> || '';
+       	 chomp $guid;
+       	 $fw{$fw}{guid} = $guid;
+		close IN;
+
+       	 if (open IN, '<', "/sys/bus/firewire/devices/$fw/units")
+       	   {
+	    # expect 0x00a02d:0x010001
+       	     my $units = <IN> || '';
+       	     chomp $units;
+       	     $fw{$fw}{units} = $units;
+       	     close IN;
+		    $units = '0x0:0x0' if $ignore_missing_units;
+
+       	     if (($guid =~ m{^0x[\da-f]*[1-9a-f][\da-f]*$}) and
+		        ($units =~ m{^0x[\da-f]+:0x[\da-f]+$}))
+		      {
+			push @good, [$fw, $guid];
+		
+			#print STDERR "variable good-0-1 is $good[0][1] \n" if $verbose >= 1;
+			#print STDERR "variable good-* is @good  scalar: "if $verbose >= 1;
+			#print scalar @good  if $verbose >= 1;
+			#print " \n device is: $good[0][0] \n";
+			print STDERR "Usable devices: /dev/$fw guid=$guid with units: $units\n" if $verbose >= 1;
+		      }
+		    else
+		     {
+		     	print  STDERR "Device : $fw has guid=$guid with empty units: $units\n" if $verbose >= 1; 
+		     } 
+		  }
+      	}
+  
+  	}
+return @good;
+}
+
+#####################################################
+# This function run grab command for fw device
+#####################################################
+
+sub run_grab
+{
+my $all_commands = join("\n", get_ps());
+my ($devices ) = @_;
+
+while (@good && $all_commands =~ m{\b$good[$devices][1]\b})
+  {
+    print STDERR "Already in use: /dev/$good([$devices][0]) guid=$good([$devices][1])\n" if $verbose >= 1;
+#    $fw{$good[$devices][0]}{in_use} = 1;
+#    shift @good;
+  }
+#die "No usable devices: " . Dumper \%fw unless scalar @good;
+
+#$dvgrab_opts = "-g '$good[$devices][1]'";
+my $dv_fw_opts = "-g '$good[$devices][1]'";
+	
+#my $cmd = '/usr/bin/dvsource-dvgrab';
+my $cmd = 'dvsource-firewire';
+
+$cmd .= " --tally" if $tally;
+#$cmd .= " --verbose" if $verbose;
+$cmd .= " -v" if $verbose;
+$cmd .= ' --retry' if $retry_connect;
+$cmd .= " --port=$port" if defined $port;
+$cmd .= " --host=$host" if defined $host;
+
+
+
+# Run bin go background:
+print STDERR "+ $cmd '$dv_fw_opts '\n" if $verbose >=1 ;
+system (" $cmd '$dv_fw_opts' & ");
+
+
+# this is a testing part: 
+
+#print STDERR "+ $cmd '$dvgrab_opts '\n" if $verbose >=1 ;
+
+#system "$cmd while true; do $dvgrab $dvgrab_opts ;sleep 2 ; done" and die "failed to run '$cmd \"$dvgrab -noavc $dvgrab_opts -\"'\n";
+#'$dvgrab $dvgrab_opts -'
+
+#system (" while true; do $cmd '$dvgrab $dvgrab_opts';sleep 2 ; done&");  
+
+# this is working but there are zombies after :
+#system (" while true; do $cmd '$dv_fw_opts';sleep 2 ; done&");  
+#via open:
+
+#open(my $PIPE, "-|", "$cmd '$dvgrab $dvgrab_opts'");
+#$cmd '$dvgrab $dvgrab_opts'");
+
+#my $pid;
+
+#test:
+
+#sleep 2;
+#unless ($pid = fork) 
+#	{
+#        unless (fork) {
+#	system (" while true; do $cmd '$dv_fw_opts';sleep 2 ; done&");
+#	system (" $cmd '$dv_fw_opts' &");
+#
+#			system (" $cmd '$dv_fw_opts' & ");
+#			print "PID is $pid \n";
+##		die "failed to run $cmd '$dvgrab_opts' \n";;
+#			sleep 5;
+##            # ... or ...
+#            ## (some_perl_code_here)
+#		         return 0;
+#	              }
+##		        return 0;
+#    	}
+#	waitpid($pid,0);
+#
+#
+
+#	return 0;
+}
+
+#exit 0;
+
+#####################################################
+# This  function run ps only
+#####################################################
+sub get_ps()
+{
+  my @r = ();
+  opendir DIR, "/proc/" or return @r;
+  my @pids = grep { /^\d+$/ } readdir DIR;
+  closedir DIR;
+
+  for my $pid (@pids)
+    {
+      if (open IN, "<", "/proc/$pid/cmdline")
+        {
+          my $cmdline = <IN> || '';
+          chomp $cmdline;
+          push @r, $cmdline;
+        }
+    }
+  return @r;
+}
