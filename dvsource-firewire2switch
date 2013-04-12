@@ -56,8 +56,11 @@
 
 
 # (C) SUSE 2013, mcaj@suse.cz, distribute under GPL-2.0+ 
+
 use strict;
-use Data::Dumper;
+use warnings;
+
+#use Data::Dumper;
 use File::stat;
 use File::Glob;
 use Getopt::Long qw(:config no_ignore_case);
@@ -65,23 +68,36 @@ use Pod::Usage;
 use POSIX ":sys_wait_h";
 
 my $version = '0.1';
+
+# Do we need them ?
 my $a_chan = undef;
 my $a_name = undef;
+
+# for the stream are need it:
 my $retry_connect = 0;
 my $host = undef;
 my $port = undef;
 my $tally = undef;
-my $verbose = 0;
-my $help = undef;
+
+my $verbose = 0; # be verbose make it 1 
+
 my $dvgrab = 'dvgrab';
 my $dvgrab_opts = '-noavc';
 my $ignore_missing_units = 0;
-my $devices;
-my @good; 
+my $devices = 0; # devices start on Zero 
+
+my @good; # array for founded FW dev.
 my $good;
 
 my @children;            # Store connections to them
 my $children;
+my %children;
+my $fwpid;
+
+my $log_file = '/tmp/dvsource-firewire2switch.log'; #log file
+
+
+my $help = undef;
 
 sub get_ps();
 sub run_grab;
@@ -133,23 +149,24 @@ Valid options are:
 # search FW device and store them in @good:
 search_dev;
 
-# run dvswitch app
-system ("/usr/bin/dvswitch & ") and die "Error start dvswitch";
-
-# slow down the script
-#sleep 5;
-
-# Start data steam from each FW device:
-
 my $max_procs=$#good ; # How many children we'll create -1
 $max_procs++; #add one becasue is start at 0
 
-my $fwpid;
-my %children;
-#this monitig childrens
+# run dvswitch app
+system ("/usr/bin/dvswitch &>$log_file & ") and die "Error start dvswitch";
+
+print "slow down the script. \n" ;
+sleep 5;
 
 
 $devices = 0 ;
+
+# In this cycle parent will make as many childern as
+# FW devices system has. There is also 2 sec. slees time after
+# FW stream start.
+
+print STDERR  " Info: $max_procs FW devices found on the machine \n" if $verbose >= 1;
+print "********************************************************* \n";
 
 foreach $good (@good )
 {
@@ -158,21 +175,23 @@ foreach $good (@good )
 
     if ($fwpid == 0) 
         {
-            # ...
             $children{$fwpid}=1;
-            # ...
-            print STDERR "Working on the device:$devices, PID:$fwpid  \n" if $verbose >= 1;
+
+            print STDERR "Working on the device:$devices:   \n" if $verbose >= 1;
             print "Starting dev/$good[$devices][0] guid=$good[$devices][1]\n \n";
-	    #sleep 5;
             run_grab ( $devices );
-            $devices++;
+	    #sleep 2;
+	    print STDERR "Info: this childern is going to exit now \n" if $verbose >= 1;
             exit 0;
         } 
     else 
         {
 
-            print STDERR "parent match, last run was $fwpid exiting script \n" if $verbose >= 1; 
+            print STDERR "The parent $fwpid match, and will live \n" if $verbose >= 1;
+            $devices++;
+	    print "Devices count was increase up to : $devices " if $verbose >= 1;
        }
+
 }
 
 
@@ -266,6 +285,8 @@ sub run_grab
 my $all_commands = join("\n", get_ps());
 my ($devices ) = @_;
 
+# This part need to be check :
+
 while (@good && $all_commands =~ m{\b$good[$devices][1]\b})
   {
     print STDERR "Already in use: /dev/$good([$devices][0]) guid=$good([$devices][1])\n" if $verbose >= 1;
@@ -274,7 +295,6 @@ while (@good && $all_commands =~ m{\b$good[$devices][1]\b})
   }
 #die "No usable devices: " . Dumper \%fw unless scalar @good;
 
-#$dvgrab_opts = "-g '$good[$devices][1]'";
 my $dv_fw_opts = "-g '$good[$devices][1]'";
 	
 #my $cmd = '/usr/bin/dvsource-dvgrab';
@@ -290,55 +310,11 @@ $cmd .= " --host=$host" if defined $host;
 
 
 # Run bin go background:
-print STDERR "+ $cmd '$dv_fw_opts '\n" if $verbose >=1 ;
-system (" $cmd '$dv_fw_opts' & ");
+print STDERR "Running command  $cmd '$dv_fw_opts ' &>$log_file & now: \n" if $verbose >=1 ;
+system (" $cmd '$dv_fw_opts' &>$log_file & ");
 
-
-# this is a testing part: 
-
-#print STDERR "+ $cmd '$dvgrab_opts '\n" if $verbose >=1 ;
-
-#system "$cmd while true; do $dvgrab $dvgrab_opts ;sleep 2 ; done" and die "failed to run '$cmd \"$dvgrab -noavc $dvgrab_opts -\"'\n";
-#'$dvgrab $dvgrab_opts -'
-
-#system (" while true; do $cmd '$dvgrab $dvgrab_opts';sleep 2 ; done&");  
-
-# this is working but there are zombies after :
-#system (" while true; do $cmd '$dv_fw_opts';sleep 2 ; done&");  
-#via open:
-
-#open(my $PIPE, "-|", "$cmd '$dvgrab $dvgrab_opts'");
-#$cmd '$dvgrab $dvgrab_opts'");
-
-#my $pid;
-
-#test:
-
-#sleep 2;
-#unless ($pid = fork) 
-#	{
-#        unless (fork) {
-#	system (" while true; do $cmd '$dv_fw_opts';sleep 2 ; done&");
-#	system (" $cmd '$dv_fw_opts' &");
-#
-#			system (" $cmd '$dv_fw_opts' & ");
-#			print "PID is $pid \n";
-##		die "failed to run $cmd '$dvgrab_opts' \n";;
-#			sleep 5;
-##            # ... or ...
-#            ## (some_perl_code_here)
-#		         return 0;
-#	              }
-##		        return 0;
-#    	}
-#	waitpid($pid,0);
-#
-#
-
-#	return 0;
+return 0;
 }
-
-#exit 0;
 
 #####################################################
 # This  function run ps only
