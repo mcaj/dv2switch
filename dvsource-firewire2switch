@@ -82,7 +82,6 @@ if ($opts{h} || !$opts{s})
 # Do we need them ?
 my $a_chan = undef;
 my $a_name = undef;
-
 # for the stream are need it:
 my $retry_connect = 0;
 my $host = undef;
@@ -162,7 +161,24 @@ $max_procs++; #add one becasue is start at 0
 # This need to be add if dir exist. 
 # and file name needs date stemps too.
 
-my $dvsink .=" ($opts{s}" ; 
+# check if dir does not exist yet:
+if (-d !$opts{s}) 
+{
+	print STDERR "Info: creating directory $opts{s} \n" if ($opts{v});
+	unless(mkdir $opts{s}) 
+	{
+		die "Error: Unable to create $opts{s}\n";
+	}
+} 
+else
+{
+	print STDERR "Info: directory $opts{s} alredy exist \n" if ($opts{v});
+}
+
+
+$opts{s} .="-%F-%T"; #add timestemp 
+
+my $dvsink .=" $opts{s}"; 
 record ($dvsink);
 
 
@@ -170,7 +186,7 @@ record ($dvsink);
 # run dvswitch app
 
 run_command ($dvswitch);
-print "slow down the script. \n" ;
+print "Slow down the script. \n" ;
 sleep 5;
 
 $devices = 0 ;
@@ -194,7 +210,7 @@ foreach $good (@good )
             print STDERR "Working on the device:$devices:   \n" if ($opts{v});
             print "Starting dev/$good[$devices][0] guid=$good[$devices][1]\n \n";
             run_grab ( $devices );
-	    #sleep 2;
+	    sleep 2;
 	    print STDERR "Info: this childern is going to exit now \n" if ($opts{v});
             exit 0;
         } 
@@ -238,11 +254,12 @@ print "Runnig $SIG{CHLD} \n";
 
 sub record
 #############################################################################
-#On the storage machine (usually the mixer itself)
+#On the storage machine (usually the mixer itself) via bash it was loop:
 # sh -c 'while true; do dvsink-files /tmp/dvswitch/test-%F-%T; sleep 2; done'
 ##############################################################################
 {
 
+    my ($dvsink) = @_;
     $savepid = fork();
     die "cannot fork" unless defined $savepid;
 
@@ -280,7 +297,7 @@ sub run_command
 {
 	my ($run_system ) = @_;
 
-	if ($opts{l})
+	if ($opts{l}) 
 	{
 		system ("$run_system &>$opts{l} & ") and die "Error start $run_system";
 	}elsif ($opts{v})
