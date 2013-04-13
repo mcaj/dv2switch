@@ -49,11 +49,11 @@
 # 3. for each FW device it run dvsource-firewire with uniqe GUID
 #
 # TODO:
-# function save video to file
-# update help part
-# update options part.
 # add loging into one or more file
-
+# add loging with time stemp
+# a] like this : print LOG localtime()." backup duration: $timevaluebackup seconds \n";
+# b] like this $timevaluebackup_strip->strftime("%H:%M:%S")
+# probably b] is better readble 
 
 # (C) SUSE 2013, mcaj@suse.cz, distribute under GPL-2.0+ 
 
@@ -65,7 +65,6 @@ use File::stat;
 use File::Glob;
 #use Getopt::Long qw(:config no_ignore_case);
 use Getopt::Std;
-#use Pod::Usage;
 use POSIX ":sys_wait_h";
 
 my $version = '0.2';
@@ -102,6 +101,7 @@ $cmd .= " --host=$opts{H}" if ($opts{H});
 my $dvgrab = 'dvgrab';
 my $dvgrab_opts = '-noavc';
 my $ignore_missing_units = 0;
+
 my $devices = 0; # devices start on Zero 
 
 my @good; # array for founded FW dev.
@@ -188,8 +188,6 @@ record ($dvsink);
 run_command ($dvswitch);
 print "Slow down the script. \n" ;
 sleep 5;
-
-$devices = 0 ;
 
 # In this cycle parent will make as many childern as
 # FW devices system has. There is also 2 sec. slees time after
