@@ -49,6 +49,10 @@
 # 3. for each FW device it run dvsource-firewire with uniqe GUID
 #
 # TODO:
+# Add -c option - sometime childern are not properrly exited so
+# we need function to kill all dv* apps, or maybe reload FW kernel
+# modules.
+#
 # -s :save file to the created dir does`n work at the moment. We
 #     need to spilt var $opts{s} .
 # -r :option currently is we use it it does`nt kill chldern process
@@ -187,7 +191,7 @@ record ($dvsink);
 
 # run dvswitch app
 
-$dvswitch .=" &"; #run it in beckground
+$dvswitch .=">/dev/null 2>&1 &"; #run it in beckground with no output
 
 run_command ($dvswitch);
 print "Slow down the script. \n" ;
@@ -213,7 +217,7 @@ foreach $good (@good )
             print "Starting dev/$good[$devices][0] guid=$good[$devices][1]\n \n";
             run_grab ( $devices );
 	    sleep 2;
-	    print STDERR "Info: this childern is going to exit now \n" if ($opts{v});
+	    print STDERR "Info: this child is going to exit now \n" if ($opts{v});
             exit 0;
         } 
     else 
